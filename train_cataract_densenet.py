@@ -43,7 +43,7 @@ class CataractDataset(Dataset):
         img_name = self.all_img_names[idx]
         image = io.imread(self.img_path + '/' + img_name)
         video_idx = img_name.split('_')[0]       #分割出这张图片是第几个视频的
-        frame_idx = int(img_name.split('_')[1].split('.')[0]) * 10  #分割出这张图片是第几帧
+        frame_idx = int(img_name.split('_')[1].split('.')[0])  #分割出这张图片是第几帧
         labels = self.raw_csv_dict[int(video_idx)].iloc[frame_idx-1, 1:].as_matrix().astype('float')
         sample = {'image': image, 'labels': labels}
 
@@ -52,6 +52,37 @@ class CataractDataset(Dataset):
     
         return sample
 
+class MeanAndStd(object):
+    def __call__(self, sample):
+        image, labels = sample['image'], sample['labels']
+        # TODO
+        return {'image': img, 'lables': labels}
+
+class HorizontalFlip(object):
+    def __call__(self, sample):
+        image, labels = sample['image'], sample['labels']
+        # TODO
+        return {'image': img, 'lables': labels}
+
+class Rotation(object):
+    def __call__(self, sample):
+        image, labels = sample['image'], sample['labels']
+        # TODO
+        return {'image': img, 'lables': labels}     
+
+class Crop(object):
+    def __call__(self, sample):
+        image, labels = sample['image'], sample['labels']
+        # TODO
+        return {'image': img, 'lables': labels}    
+
+class ColorTransform(object):
+    def __call__(self, sample):
+        image, labels = sample['image'], sample['labels']
+        # TODO
+        return {'image': img, 'lables': labels}       
+     
+     
 class ToTensor(object):
     """Convert ndarrays in sample to Tensors."""
 
@@ -84,12 +115,17 @@ def show_img(sample_batched):
 transformed_dataset = CataractDataset(
                       csv_path='/media/zfq/本地磁盘/cataract/train/train_labels/', 
                       transform=transforms.Compose([
+                                 MeanAndStd()
+                                 HorizontalFlip()
+                                 Crop()
+                                 Rotation()
+                                 ColorTranform()
                                  ToTensor()
                                 ]))
 growth_rate=12
 n_epochs=10
 batch_size=8
-lr=0.01
+base_lr=0.01
 wd=0.0001
 momentum=0.9
 
@@ -110,11 +146,21 @@ model = CataractDenseNet(
 print(model)
 model_cuda = model.cuda()
 
-optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=wd)
+optimizer = optim.SGD(model.parameters(), lr=base_lr, momentum=momentum, weight_decay=wd)
 criterion = nn.SoftMarginLoss()
 
 for epoch in range(1, n_epochs + 1):
     
+    if float(epoch) / n_epochs > 0.75:
+        lr = base_lr * 0.01
+    elif float(epoch) / n_epochs > 0.5:
+        lr = base_lr * 0.1
+    else:
+        lr = base_lr
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+        print(param_group['lr'])
+
     for i, sample_batched in enumerate(dataloader):
     #    dataiter = iter(dataloader)
     #    sample_batched= dataiter.next()
