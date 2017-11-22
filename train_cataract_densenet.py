@@ -37,14 +37,14 @@ class CataractDataset(Dataset):
         self.all_img_names = os.listdir(self.img_path)
  
     def __len__(self):
-        return 49475
+        return len(self.all_img_names)
         
     def __getitem__(self, idx):
         img_name = self.all_img_names[idx]
         image = io.imread(self.img_path + '/' + img_name)
-        video_idx = img_name.split('_')[0]       #分割出这张图片是第几个视频的
+        video_idx = int(img_name.split('_')[0])       #分割出这张图片是第几个视频的
         frame_idx = int(img_name.split('_')[1].split('.')[0])  #分割出这张图片是第几帧
-        labels = self.raw_csv_dict[int(video_idx)].iloc[frame_idx-1, 1:].as_matrix().astype('float')
+        labels = self.raw_csv_dict[video_idx].iloc[frame_idx-1, 1:].as_matrix().astype('float')
         sample = {'image': image, 'labels': labels}
 
         if self.transform:
@@ -52,16 +52,26 @@ class CataractDataset(Dataset):
     
         return sample
 
+
+
+train_transforms = tv.transforms.Compose([
+        tv.transforms.RandomHorizontalFlip(),
+        tv.transforms.Normalize(mean=mean, std=stdv),
+    ])
+test_transforms = tv.transforms.Compose([
+        tv.transforms.Normalize(mean=mean, std=stdv),
+    ])
+
 class MeanAndStd(object):
     def __call__(self, sample):
         image, labels = sample['image'], sample['labels']
-        # TODO
+        img = 
         return {'image': img, 'lables': labels}
 
 class HorizontalFlip(object):
     def __call__(self, sample):
         image, labels = sample['image'], sample['labels']
-        # TODO
+        img =  
         return {'image': img, 'lables': labels}
 
 class Rotation(object):
@@ -70,7 +80,7 @@ class Rotation(object):
         # TODO
         return {'image': img, 'lables': labels}     
 
-class Crop(object):
+class RandomCrop(object):
     def __call__(self, sample):
         image, labels = sample['image'], sample['labels']
         # TODO
@@ -117,7 +127,7 @@ transformed_dataset = CataractDataset(
                       transform=transforms.Compose([
                                  MeanAndStd()
                                  HorizontalFlip()
-                                 Crop()
+                                 RandomCrop()
                                  Rotation()
                                  ColorTranform()
                                  ToTensor()
