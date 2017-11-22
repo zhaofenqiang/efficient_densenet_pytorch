@@ -1,5 +1,4 @@
-# -*- coding: UTF-8 -*-
-
+import fire
 import os
 import time
 import torch
@@ -9,7 +8,7 @@ from torch.autograd import Variable
 from torch.utils.data.sampler import SubsetRandomSampler
 from models import DenseNet, DenseNetEfficient, DenseNetEfficientMulti
 
-#%%
+
 class Meter():
     """
     A little helper class which keeps track of statistics during an epoch.
@@ -48,15 +47,22 @@ class Meter():
             for n, lv, v in zip(self.name, self._last_value, self.value())])
 
 
-def _make_dataloaders(train_set, test_set, train_size, batch_size):
+def _make_dataloaders(train_set, valid_set, test_set, train_size, valid_size, batch_size):
     # Split training into train and validation
-    indices = torch.randperm(len(train_set))   #Returns a random permutation(pailie) of integers from 0 to n - 1.
-    train_indices = indices[:len(indices)][:train_size or None] # or operation: 从左到右扫描，返回第一个为真的表达式值，无真值则返回最后一个表达式值。
+    indices = torch.randperm(len(train_set))
+    train_indices = indices[:len(indices)-valid_size][:train_size or None]
+    valid_indices = indices[len(indices)-valid_size:] if valid_size else None
 
     train_loader = torch.utils.data.DataLoader(train_set, pin_memory=True, batch_size=batch_size,
                                                sampler=SubsetRandomSampler(train_indices))
     test_loader = torch.utils.data.DataLoader(test_set, pin_memory=True, batch_size=batch_size)
-    return train_loader, test_loader
+    if valid_size:
+        valid_loader = torch.utils.data.DataLoader(valid_set, pin_memory=True, batch_size=batch_size,
+                                                   sampler=SubsetRandomSampler(valid_indices))
+    else:
+        valid_loader = None
+
+    return train_loader, valid_loader, test_loader
 
 
 def _set_lr(optimizer, epoch, n_epochs, lr):
@@ -72,6 +78,9 @@ def _set_lr(optimizer, epoch, n_epochs, lr):
 
 
 def run_epoch(loader, model, criterion, optimizer, epoch=0, n_epochs=0, train=True):
+    time_meter = Meter(name='Time', cum=True)
+    loss_meter = Meter(name='Loss', cum=False)
+    error_meter = Meter(name='Error', cum=False)
 
     if train:
         model.train()
@@ -81,15 +90,14 @@ def run_epoch(loader, model, criterion, optimizer, epoch=0, n_epochs=0, train=Tr
         print('Evaluating')
 
     end = time.time()
-    for i, (input, label) in enumerate(loader):
-        # enumerate(loader)返回input和label
+    for i, (input, target) in enumerate(loader):
         if train:
             model.zero_grad()
             optimizer.zero_grad()
 
         # Forward pass
         input_var = Variable(input, volatile=(not train)).cuda(async=True)
-        target_var = Variable(label, volatile=(not train), requires_grad=False).cuda(async=True)
+        target_var = Variable(target, volatile=(not train), requires_grad=False).cuda(async=True)
         output_var = model(input_var)
         loss = criterion(output_var, target_var)
 
@@ -97,40 +105,58 @@ def run_epoch(loader, model, criterion, optimizer, epoch=0, n_epochs=0, train=Tr
         if train:
             loss.backward()
             optimizer.step()
+            optimizer.n_iters = optimizer.n_iters + 1 if hasattr(optimizer, 'n_iters') else 1
 
         # Accounting
-        _, predicted_var = torch.max(output_var, 1)
-        error = 1 - torch.eq(predicted_var, target_var).float().mean()
+        _, predictions_var = torch.topk(output_var, 1)
+        error = 1 - torch.eq(predictions_var, target_var).float().mean()
         batch_time = time.time() - end
         end = time.time()
-        
-        if i==500 :
-            print('%s: (Epoch %d of %d) [%04d/%04d] Time:%.5f   Loss:%.5f    error: %.5f'
-              % ('Train',epoch, n_epochs, i + 1, len(loader), batch_time, loss.data[0], error.data[0]))
+
+        # Log errors
+        time_meter.update(batch_time)
+        loss_meter.update(loss)
+        error_meter.update(error)
+        print('  '.join([
+            '%s: (Epoch %d of %d) [%04d/%04d]' % ('Train' if train else 'Eval',
+                epoch, n_epochs, i + 1, len(loader)),
+            str(time_meter),
+            str(loss_meter),
+            str(error_meter),
+        ]))
+
+    return time_meter.value(), loss_meter.value(), error_meter.value()
 
 
-def train(model, train_set, test_set, save, train_size=0,
-          n_epochs=1, batch_size=64, lr=0.01, wd=0.0001, momentum=0.9, seed=None):
+def train(model, train_set, valid_set, test_set, save, train_size=0, valid_size=5000,
+          n_epochs=1, batch_size=64, lr=0.1, wd=0.0001, momentum=0.9, seed=None):
 
     if seed is not None:
         torch.manual_seed(seed)
 
     # Make model, criterion, optimizer, data loaders
-    train_loader, test_loader = _make_dataloaders(
+    train_loader, valid_loader, test_loader = _make_dataloaders(
         train_set=train_set,
+        valid_set=valid_set,
         test_set=test_set,
         train_size=train_size,
+        valid_size=valid_size,
         batch_size=batch_size,
     )
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum, nesterov=True, weight_decay=wd)
 
-    model_wrapper = model.cuda()
+    # Wrap model if multiple gpus
+    if torch.cuda.device_count() > 1:
+        model_wrapper = torch.nn.DataParallel(model).cuda()
+    else:
+        model_wrapper = model.cuda()
 
     # Train model
+    best_error = 1
     for epoch in range(1, n_epochs + 1):
         _set_lr(optimizer, epoch, n_epochs, lr)
-        run_epoch(
+        train_results = run_epoch(
             loader=train_loader,
             model=model_wrapper,
             criterion=criterion,
@@ -139,13 +165,26 @@ def train(model, train_set, test_set, save, train_size=0,
             n_epochs=n_epochs,
             train=True,
         )
-        
-        if epoch % 10 == 0:
-            torch.save(model.state_dict(), save + '/model' + '_' + str(epoch))
+        valid_results = run_epoch(
+            loader=valid_loader,
+            model=model_wrapper,
+            criterion=criterion,
+            optimizer=optimizer,
+            epoch=epoch,
+            n_epochs=n_epochs,
+            train=False,
+        )
+
+        # Determine if model is the best
+        _, _, valid_error = valid_results
+        if valid_error[0] < best_error:
+            best_error = valid_error[0]
+            print('New best error: %.4f' % best_error)
+            torch.save(model.state_dict(), os.path.join(save, 'model.t7'))
 
 
-def demo(data=os.getenv('DATA_DIR'), save='tmp', depth=100, growth_rate=12, efficient=True,
-         n_epochs=100, batch_size=64, seed=None, multi_gpu=False):
+def demo(data=os.getenv('DATA_DIR'), save='/tmp', depth=40, growth_rate=12, efficient=True,
+         n_epochs=300, batch_size=256, seed=None, multi_gpu=False):
     """
     A demo to show off training of efficient DenseNets.
     Trains and evaluates a DenseNet-BC on CIFAR-10.
@@ -163,12 +202,11 @@ def demo(data=os.getenv('DATA_DIR'), save='tmp', depth=100, growth_rate=12, effi
         batch_size (int) - size of minibatch (default 256)
         seed (int) - manually set the random seed (default None)
     """
-    #os.getenv('DATA_DIR') get environment_variable
-    
+
     # Get densenet configuration
     if (depth - 4) % 3:
         raise Exception('Invalid depth')
-    block_config = [(depth - 4) // 6 for _ in range(3)]  #取整除 - 返回商的整数部分, block_config:[6, 6, 6]
+    block_config = [(depth - 4) // 6 for _ in range(3)]
 
     # Data transforms
     mean = [0.5071, 0.4867, 0.4408]
@@ -185,11 +223,15 @@ def demo(data=os.getenv('DATA_DIR'), save='tmp', depth=100, growth_rate=12, effi
     ])
 
     # Datasets
-    data_root = os.path.join('data', 'cifar10')
-    train_set = tv.datasets.CIFAR10(data_root, train=True, transform=train_transforms,download=False)
+    data_root = os.path.join(data, 'cifar10')
+    train_set = tv.datasets.CIFAR10(data_root, train=True, transform=train_transforms, download=True)
+    valid_set = tv.datasets.CIFAR10(data_root, train=True, transform=test_transforms, download=False)
     test_set = tv.datasets.CIFAR10(data_root, train=False, transform=test_transforms, download=False)
 
-    model = DenseNetEfficient(
+    # Models
+    klass = DenseNetEfficient if efficient else DenseNet
+    klass = DenseNetEfficientMulti if multi_gpu else klass
+    model = klass(
         growth_rate=growth_rate,
         block_config=block_config,
         num_classes=10,
@@ -204,10 +246,27 @@ def demo(data=os.getenv('DATA_DIR'), save='tmp', depth=100, growth_rate=12, effi
         raise Exception('%s is not a dir' % save)
 
     # Train the model
-    train(model=model, train_set=train_set, test_set=test_set, save=save,
+    train(model=model, train_set=train_set, valid_set=valid_set, test_set=test_set, save=save,
           n_epochs=n_epochs, batch_size=batch_size, seed=seed)
     print('Done!')
-    
-    
-demo(data='data')
 
+
+"""
+A demo to show off training of efficient DenseNets.
+Trains and evaluates a DenseNet-BC on CIFAR-10.
+
+Try out the efficient DenseNet implementation:
+python demo.py --efficient True --data <path_to_data_dir> --save <path_to_save_dir>
+
+Try out the naive DenseNet implementation:
+python demo.py --efficient True --data <path_to_data_dir> --save <path_to_save_dir>
+
+Other args:
+    --depth (int) - depth of the network (number of convolution layers) (default 40)
+    --growth_rate (int) - number of features added per DenseNet layer (default 12)
+    --n_epochs (int) - number of epochs for training (default 300)
+    --batch_size (int) - size of minibatch (default 256)
+    --seed (int) - manually set the random seed (default None)
+"""
+if __name__ == '__main__':
+    fire.Fire(demo)
