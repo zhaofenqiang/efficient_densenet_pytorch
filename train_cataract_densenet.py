@@ -86,8 +86,14 @@ transformed_dataset = CataractDataset(
                       transform=transforms.Compose([
                                  ToTensor()
                                 ]))
+growth_rate=12
+n_epochs=10
+batch_size=8
+lr=0.01
+wd=0.0001
+momentum=0.9
 
-dataloader = DataLoader(transformed_dataset, batch_size=4,
+dataloader = DataLoader(transformed_dataset, batch_size=batch_size,
                         shuffle=True, num_workers=4)
 
 #for i_batch, sample_batched in enumerate(dataloader):
@@ -96,14 +102,6 @@ dataloader = DataLoader(transformed_dataset, batch_size=4,
 #    if i_batch == 3:
 #        break
     
-    
-growth_rate=12
-n_epochs=100
-batch_size=4
-lr=0.01
-wd=0.0001
-momentum=0.9
-
 model = CataractDenseNet(
         growth_rate = growth_rate,
         block_config=[6, 24, 20, 16],
@@ -139,7 +137,7 @@ for epoch in range(1, n_epochs + 1):
         
         if i % 10 == 0 :
             print('%s: (Epoch %d of %d) [%04d/%04d]   Loss:%.5f'
-                  % ('Train',epoch, n_epochs, i + 1, len(dataloader), loss.data[0]))
+                  % ('Train',epoch, n_epochs, i, len(dataloader), loss.data[0]))
 
     if epoch % 10 == 0:
         torch.save(model.state_dict(), 'tmp/cataract_model' + '_' + str(epoch))
