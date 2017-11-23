@@ -10,7 +10,7 @@ from __future__ import print_function, division
 import os
 import torch
 import pandas as pd
-from skimage import io
+from skimage import io, transform
 import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
@@ -45,14 +45,14 @@ class CataractDataset(Dataset):
         self.all_img_names = os.listdir(self.img_path)
  
     def __len__(self):
-        return 49475
+        return len(self.all_img_names)
         
     def __getitem__(self, idx):
         img_name = self.all_img_names[idx]
         image = io.imread(self.img_path + '/' + img_name)
-        video_idx = img_name.split('_')[0]       #分割出这张图片是第几个视频的
-        frame_idx = int(img_name.split('_')[1].split('.')[0]) * 10  #分割出这张图片是第几帧
-        labels = self.raw_csv_dict[int(video_idx)].iloc[frame_idx-1, 1:].as_matrix().astype('float')
+        video_idx = int(img_name.split('_')[0])       #分割出这张图片是第几个视频的
+        frame_idx = int(img_name.split('_')[1].split('.')[0])  #分割出这张图片是第几帧
+        labels = self.raw_csv_dict[video_idx].iloc[frame_idx-1, 1:].as_matrix().astype('float')
         sample = {'image': image, 'labels': labels}
 
         if self.transform:
@@ -60,6 +60,47 @@ class CataractDataset(Dataset):
     
         return sample
 
+
+
+train_transforms = tv.transforms.Compose([
+        tv.transforms.RandomHorizontalFlip(),
+        tv.transforms.Normalize(mean=mean, std=stdv),
+    ])
+test_transforms = tv.transforms.Compose([
+        tv.transforms.Normalize(mean=mean, std=stdv),
+    ])
+
+class MeanAndStd(object):
+    def __call__(self, sample):
+        image, labels = sample['image'], sample['labels']
+        img = 
+        return {'image': img, 'lables': labels}
+
+class HorizontalFlip(object):
+    def __call__(self, sample):
+        image, labels = sample['image'], sample['labels']
+        img =  
+        return {'image': img, 'lables': labels}
+
+class Rotation(object):
+    def __call__(self, sample):
+        image, labels = sample['image'], sample['labels']
+        # TODO
+        return {'image': img, 'lables': labels}     
+
+class RandomCrop(object):
+    def __call__(self, sample):
+        image, labels = sample['image'], sample['labels']
+        # TODO
+        return {'image': img, 'lables': labels}    
+
+class ColorTransform(object):
+    def __call__(self, sample):
+        image, labels = sample['image'], sample['labels']
+        # TODO
+        return {'image': img, 'lables': labels}       
+     
+     
 class ToTensor(object):
     """Convert ndarrays in sample to Tensors."""
 
@@ -92,8 +133,19 @@ def show_img(sample_batched):
 transformed_dataset = CataractDataset(
                       csv_path='/media/zfq/本地磁盘/cataract/train/train_labels/', 
                       transform=transforms.Compose([
+                                 MeanAndStd()
+                                 HorizontalFlip()
+                                 RandomCrop()
+                                 Rotation()
+                                 ColorTranform()
                                  ToTensor()
                                 ]))
+growth_rate=12
+n_epochs=10
+batch_size=8
+base_lr=0.01
+wd=0.0001
+momentum=0.9
 
 dataloader = DataLoader(transformed_dataset, batch_size=batch_size,
                         shuffle=True, num_workers=4)
@@ -106,17 +158,27 @@ dataloader = DataLoader(transformed_dataset, batch_size=batch_size,
     
 model = CataractDenseNet(
         growth_rate = growth_rate,
-        block_config = block_config,
-        num_classes = 21,
+        block_config=[6, 24, 20, 16],
+        num_classes=21,
     )
 print(model)
 model_cuda = model.cuda()
 
-optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=wd)
+optimizer = optim.SGD(model.parameters(), lr=base_lr, momentum=momentum, weight_decay=wd)
 criterion = nn.SoftMarginLoss()
 
 for epoch in range(1, n_epochs + 1):
     
+    if float(epoch) / n_epochs > 0.75:
+        lr = base_lr * 0.01
+    elif float(epoch) / n_epochs > 0.5:
+        lr = base_lr * 0.1
+    else:
+        lr = base_lr
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+        print(param_group['lr'])
+
     for i, sample_batched in enumerate(dataloader):
     #    dataiter = iter(dataloader)
     #    sample_batched= dataiter.next()
