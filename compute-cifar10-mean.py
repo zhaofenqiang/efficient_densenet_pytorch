@@ -6,7 +6,6 @@ Created on Tue Nov 21 20:41:03 2017
 @author: zfq
 """
 
-import argparse
 import torch
 
 import torch.nn as nn
@@ -27,6 +26,9 @@ import math
 
 import numpy as np
 import matplotlib.pyplot as plt
+#%%
+
+
 
 train_data = dset.CIFAR10(root='data/cifar10', train=True, download=False,
                     transform=transforms.ToTensor()).train_data
