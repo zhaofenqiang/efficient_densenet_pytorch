@@ -10,7 +10,7 @@ from __future__ import print_function, division
 import os
 import torch
 import pandas as pd
-from skimage import io, transform
+from skimage import io
 import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
@@ -21,6 +21,14 @@ from torch import nn, optim
 from torch.autograd import Variable
 
 #%%
+growth_rate=12
+block_config=[6, 24, 20, 16]
+n_epochs=10
+batch_size=8
+lr=0.01
+wd=0.0001
+momentum=0.9
+
 class CataractDataset(Dataset):
      
     def __init__(self, csv_path, transform=None):
@@ -86,12 +94,6 @@ transformed_dataset = CataractDataset(
                       transform=transforms.Compose([
                                  ToTensor()
                                 ]))
-growth_rate=12
-n_epochs=10
-batch_size=8
-lr=0.01
-wd=0.0001
-momentum=0.9
 
 dataloader = DataLoader(transformed_dataset, batch_size=batch_size,
                         shuffle=True, num_workers=4)
@@ -104,8 +106,8 @@ dataloader = DataLoader(transformed_dataset, batch_size=batch_size,
     
 model = CataractDenseNet(
         growth_rate = growth_rate,
-        block_config=[6, 24, 20, 16],
-        num_classes=21,
+        block_config = block_config,
+        num_classes = 21,
     )
 print(model)
 model_cuda = model.cuda()
