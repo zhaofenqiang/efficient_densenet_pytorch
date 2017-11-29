@@ -47,7 +47,7 @@ for data in test_loader:
 #    images, labels = dataiter.next()
     images, labels = data
     labels = Variable(labels, volatile=True).cuda(async=True)
-    outputs = model(Variable(images,  volatile=True).cuda(async=True))
+    outputs = model_wrapper(Variable(images,  volatile=True).cuda(async=True))
     _, predicted = torch.max(outputs.data, 1)
     total += labels.size(0)
     correct += (predicted == labels.data).sum()
